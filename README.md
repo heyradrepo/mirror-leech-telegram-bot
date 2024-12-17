@@ -121,7 +121,7 @@ programming in Python.
 - Using 7-zip tool to extract with or without password all supported types:
 
 > ZIP, RAR, TAR, 7z, ISO, WIM, CAB, GZIP, BZIP2, APM, ARJ, CHM, CPIO, CramFS, DEB, DMG, FAT, HFS, LZH, LZMA, LZMA2,MBR,
-> MSI, MSLZ, NSIS, NTFS, RPM, SquashFS, UDF, VHD, XAR, Z, TAR.XZ, CBZ
+> MSI, MSLZ, NSIS, NTFS, RPM, SquashFS, UDF, VHD, XAR, Z, TAR.XZ
 
 ## RSS
 
@@ -158,7 +158,6 @@ programming in Python.
 - Add sudo users
 - Ability to save upload paths
 - Name Substitution to rename the files before upload
-- User can select whether he want to use his rclone.conf/token.pickle without adding mpt: or mrcc: before path/gd-id
 - Supported Direct links Generators:
 
 > mediafire (file/folders), hxfile.co (need cookies txt with name) [hxfile.txt], streamtape.com, streamsb.net, streamhub.ink,

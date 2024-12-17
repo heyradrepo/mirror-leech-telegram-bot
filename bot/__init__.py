@@ -1,4 +1,5 @@
 from sys import exit
+from inspect import signature
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aria2p import API as ariaAPI, Client as ariaClient
 from asyncio import Lock, new_event_loop, set_event_loop
@@ -18,9 +19,8 @@ from shutil import rmtree
 from os import remove, path as ospath, environ
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from pyrogram import Client as TgClient, enums
+from pyrogram import Client as TgClient, enums, utils
 from qbittorrentapi import Client as QbClient
-from sabnzbdapi import SabnzbdClient
 from socket import setdefaulttimeout
 from subprocess import Popen, run
 from time import time
@@ -32,6 +32,9 @@ from uvloop import install
 
 install()
 setdefaulttimeout(600)
+
+utils.MIN_CHAT_ID = -999999999999
+utils.MIN_CHANNEL_ID = -100999999999999
 
 getLogger("qbittorrentapi").setLevel(INFO)
 getLogger("requests").setLevel(INFO)
@@ -55,10 +58,8 @@ LOGGER = getLogger(__name__)
 
 load_dotenv("config.env", override=True)
 
-intervals = {"status": {}, "qb": "", "jd": "", "nzb": "", "stopAll": False}
+intervals = {"status": {}, "qb": "", "stopAll": False}
 qb_torrents = {}
-jd_downloads = {}
-nzb_jobs = {}
 drives_names = []
 drives_ids = []
 index_urls = []
@@ -66,7 +67,6 @@ global_extension_filter = ["aria2", "!qB"]
 user_data = {}
 aria2_options = {}
 qbit_options = {}
-nzb_options = {}
 queued_dl = {}
 queued_up = {}
 non_queued_dl = set()
@@ -84,14 +84,13 @@ except:
 task_dict_lock = Lock()
 queue_dict_lock = Lock()
 qb_listener_lock = Lock()
-nzb_listener_lock = Lock()
-jd_lock = Lock()
 cpu_eater_lock = Lock()
 subprocess_lock = Lock()
 same_directory_lock = Lock()
 status_dict = {}
 task_dict = {}
 rss_dict = {}
+
 
 BOT_TOKEN = environ.get("BOT_TOKEN", "")
 if len(BOT_TOKEN) == 0:
@@ -138,14 +137,6 @@ if DATABASE_URL:
         if qbit_opt := db.settings.qbittorrent.find_one({"_id": BOT_ID}):
             del qbit_opt["_id"]
             qbit_options = qbit_opt
-        if nzb_opt := db.settings.nzb.find_one({"_id": BOT_ID}):
-            if ospath.exists("sabnzbd/SABnzbd.ini.bak"):
-                remove("sabnzbd/SABnzbd.ini.bak")
-            del nzb_opt["_id"]
-            ((key, value),) = nzb_opt.items()
-            file_ = key.replace("__", ".")
-            with open(f"sabnzbd/{file_}", "wb+") as f:
-                f.write(value)
         conn.close()
         BOT_TOKEN = environ.get("BOT_TOKEN", "")
         BOT_ID = BOT_TOKEN.split(":", 1)[0]
@@ -155,19 +146,17 @@ if DATABASE_URL:
 else:
     config_dict = {}
 
-if ospath.exists("cfg.zip"):
-    if ospath.exists("/JDownloader/cfg"):
-        rmtree("/JDownloader/cfg", ignore_errors=True)
-    run(["7z", "x", "cfg.zip", "-o/JDownloader"])
-    remove("cfg.zip")
-
 if not ospath.exists(".netrc"):
     with open(".netrc", "w"):
         pass
-run(
-    "chmod 600 .netrc && cp .netrc /root/.netrc && chmod +x aria-nox-nzb.sh && ./aria-nox-nzb.sh",
-    shell=True,
+commands = (
+    "chmod 600 .netrc",
+    "cp .netrc /root/.netrc",
+    "chmod +x worker",
+    "./worker"
 )
+
+run(" && ".join(commands), shell=True)
 
 OWNER_ID = environ.get("OWNER_ID", "")
 if len(OWNER_ID) == 0:
@@ -191,26 +180,23 @@ if len(TELEGRAM_HASH) == 0:
     bot_loop.stop()
     exit(1)
 
+def xyClient(*args, **kwargs):
+    if 'max_concurrent_transmissions' in signature(TgClient.__init__).parameters:
+        kwargs['max_concurrent_transmissions'] = 1000
+    return TgClient(*args, **kwargs)
+
+IS_PREMIUM_USER = False
+user = ""
 USER_SESSION_STRING = environ.get("USER_SESSION_STRING", "")
 if len(USER_SESSION_STRING) != 0:
     log_info("Creating client from USER_SESSION_STRING")
     try:
-        user = TgClient(
-            "user",
-            TELEGRAM_API,
-            TELEGRAM_HASH,
-            session_string=USER_SESSION_STRING,
-            parse_mode=enums.ParseMode.HTML,
-            max_concurrent_transmissions=10,
-        ).start()
+        user = xyClient("user", TELEGRAM_API, TELEGRAM_HASH, session_string=USER_SESSION_STRING,
+                        parse_mode=enums.ParseMode.HTML, no_updates=True).start()
         IS_PREMIUM_USER = user.me.is_premium
-    except:
-        log_error("Failed to start client from USER_SESSION_STRING")
-        IS_PREMIUM_USER = False
+    except Exception as e:
+        log_error(f"Failed making client from USER_SESSION_STRING: {e}")
         user = ""
-else:
-    IS_PREMIUM_USER = False
-    user = ""
 
 GDRIVE_ID = environ.get("GDRIVE_ID", "")
 if len(GDRIVE_ID) == 0:
@@ -259,23 +245,11 @@ if len(EXTENSION_FILTER) > 0:
         x = x.lstrip(".")
         global_extension_filter.append(x.strip().lower())
 
-JD_EMAIL = environ.get("JD_EMAIL", "")
-JD_PASS = environ.get("JD_PASS", "")
-if len(JD_EMAIL) == 0 or len(JD_PASS) == 0:
-    JD_EMAIL = ""
-    JD_PASS = ""
-
-USENET_SERVERS = environ.get("USENET_SERVERS", "")
-try:
-    if len(USENET_SERVERS) == 0:
-        USENET_SERVERS = []
-    elif (us := eval(USENET_SERVERS)) and not us[0].get("host"):
-        USENET_SERVERS = []
-    else:
-        USENET_SERVERS = eval(USENET_SERVERS)
-except:
-    log_error(f"Wrong USENET_SERVERS format: {USENET_SERVERS}")
-    USENET_SERVERS = []
+MEGA_EMAIL = environ.get("MEGA_EMAIL", "")
+MEGA_PASS = environ.get("MEGA_PASS", "")
+if len(MEGA_EMAIL) == 0 or len(MEGA_PASS) == 0:
+    MEGA_EMAIL = ""
+    MEGA_PASS = ""
 
 FILELION_API = environ.get("FILELION_API", "")
 if len(FILELION_API) == 0:
@@ -304,7 +278,7 @@ else:
     try:
         SEARCH_PLUGINS = eval(SEARCH_PLUGINS)
     except:
-        log_error(f"Wrong USENET_SERVERS format: {SEARCH_PLUGINS}")
+        log_error(f"Wrong SEARCH_PLUGINS format: {SEARCH_PLUGINS}")
         SEARCH_PLUGINS = ""
 
 MAX_SPLIT_SIZE = 4194304000 if IS_PREMIUM_USER else 2097152000
@@ -450,8 +424,8 @@ config_dict = {
     "INCOMPLETE_TASK_NOTIFIER": INCOMPLETE_TASK_NOTIFIER,
     "INDEX_URL": INDEX_URL,
     "IS_TEAM_DRIVE": IS_TEAM_DRIVE,
-    "JD_EMAIL": JD_EMAIL,
-    "JD_PASS": JD_PASS,
+    "MEGA_EMAIL": MEGA_EMAIL,
+    "MEGA_PASS": MEGA_PASS,
     "LEECH_DUMP_CHAT": LEECH_DUMP_CHAT,
     "LEECH_FILENAME_PREFIX": LEECH_FILENAME_PREFIX,
     "LEECH_SPLIT_SIZE": LEECH_SPLIT_SIZE,
@@ -485,7 +459,6 @@ config_dict = {
     "USER_TRANSMISSION": USER_TRANSMISSION,
     "UPSTREAM_REPO": UPSTREAM_REPO,
     "UPSTREAM_BRANCH": UPSTREAM_BRANCH,
-    "USENET_SERVERS": USENET_SERVERS,
     "USER_SESSION_STRING": USER_SESSION_STRING,
     "USE_SERVICE_ACCOUNTS": USE_SERVICE_ACCOUNTS,
     "WEB_PINCODE": WEB_PINCODE,
@@ -509,11 +482,11 @@ if ospath.exists("list_drives.txt"):
             else:
                 index_urls.append("")
 
-if BASE_URL:
-    Popen(
-        f"gunicorn web.wserver:app --bind 0.0.0.0:{BASE_URL_PORT} --worker-class gevent",
-        shell=True,
-    )
+PORT = environ.get("PORT")
+Popen(
+    f"gunicorn web.wserver:app --bind 0.0.0.0:{PORT} --worker-class gevent",
+    shell=True,
+)
 
 if ospath.exists("accounts.zip"):
     if ospath.exists("accounts"):
@@ -536,12 +509,6 @@ qbittorrent_client = QbClient(
     },
 )
 
-sabnzbd_client = SabnzbdClient(
-    host="http://localhost",
-    api_key="mltb",
-    port="8070",
-)
-
 
 aria2c_global = [
     "bt-max-open-files",
@@ -560,13 +527,12 @@ aria2c_global = [
 ]
 
 log_info("Creating client from BOT_TOKEN")
-bot = TgClient(
+bot = xyClient(
     "bot",
     TELEGRAM_API,
     TELEGRAM_HASH,
     bot_token=BOT_TOKEN,
     parse_mode=enums.ParseMode.HTML,
-    max_concurrent_transmissions=10,
 ).start()
 bot_name = bot.me.username
 
@@ -596,11 +562,3 @@ if not aria2_options:
 else:
     a2c_glo = {op: aria2_options[op] for op in aria2c_global if op in aria2_options}
     aria2.set_global_options(a2c_glo)
-
-
-async def get_nzb_options():
-    global nzb_options
-    nzb_options = (await sabnzbd_client.get_config())["config"]["misc"]
-
-
-bot_loop.run_until_complete(get_nzb_options())

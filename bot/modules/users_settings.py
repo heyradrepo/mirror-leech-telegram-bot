@@ -3,9 +3,10 @@ from asyncio import sleep
 from functools import partial
 from html import escape
 from io import BytesIO
-from os import getcwd
+from os import getcwd, path as ospath
 from pyrogram.filters import command, regex, create
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.types import InputMediaPhoto
 from time import time
 
 from bot import (
@@ -119,6 +120,10 @@ async def get_user_settings(from_user):
         thumb_layout = config_dict["THUMBNAIL_LAYOUT"]
     else:
         thumb_layout = "None"
+    if user_dict.get("metadatatext", False):
+        metadatatext = user_dict["metadatatext"]
+    else:
+        metadatatext = "None"
 
     buttons.data_button("Leech", f"userset {user_id} leech")
 
@@ -198,45 +203,72 @@ async def get_user_settings(from_user):
 
     buttons.data_button("Close", f"userset {user_id} close")
 
-    text = f"""<u>Settings for {name}</u>
-Leech Type is <b>{ltype}</b>
-Custom Thumbnail <b>{thumbmsg}</b>
-Leech Split Size is <b>{split_size}</b>
-Equal Splits is <b>{equal_splits}</b>
-Media Group is <b>{media_group}</b>
-Leech Prefix is <code>{escape(lprefix)}</code>
-Leech Destination is <code>{leech_dest}</code>
-Leech by <b>{leech_method}</b> session
-Mixed Leech is <b>{mixed_leech}</b>
-Thumbnail Layout is <b>{thumb_layout}</b>
-Rclone Config <b>{rccmsg}</b>
-Rclone Path is <code>{rccpath}</code>
-Gdrive Token <b>{tokenmsg}</b>
-Upload Paths is <b>{upload_paths}</b>
-Gdrive ID is <code>{gdrive_id}</code>
-Index Link is <code>{index}</code>
-Stop Duplicate is <b>{sd_msg}</b>
-Default Package is <b>{du}</b>
-Upload using <b>{tr}</b> token/config
-Name substitution is <b>{ns_msg}</b>
-Excluded Extensions is <code>{ex_ex}</code>
-YT-DLP Options is <code>{escape(ytopt)}</code>
-FFMPEG Commands is <code>{ffc}</code>"""
+    text = (
+    f"<u>Settings for {name}</u>\n"
+    f"Leech Type: <b>{ltype}</b>\n"
+    f"Custom Thumbnail: <b>{thumbmsg}</b>\n"
+    f"Split Size: <b>{split_size}</b>\n"
+    f"Equal Splits: <b>{equal_splits}</b>\n"
+    f"Media Group: <b>{media_group}</b>\n"
+    f"Prefix: <code>{escape(lprefix)}</code>\n"
+    f"Destination: <code>{leech_dest}</code>\n"
+    f"Leech by: <b>{leech_method}</b>\n"
+    f"Mixed Leech: <b>{mixed_leech}</b>\n"
+    f"Thumbnail Layout: <b>{thumb_layout}</b>\n"
+    f"Metadata Text: <code>{escape(metadatatext)}</code>\n"
+    f"Rclone Config: <b>{rccmsg}</b>\n"
+    f"Rclone Path: <code>{rccpath}</code>\n"
+    f"Gdrive Token: <b>{tokenmsg}</b>\n"
+    f"Upload Paths: <b>{upload_paths}</b>\n"
+    f"Gdrive ID: <code>{gdrive_id}</code>\n"
+    f"Index Link: <code>{index}</code>\n"
+    f"Stop Duplicate: <b>{sd_msg}</b>\n"
+    f"Default Package: <b>{du}</b>\n"
+    f"Upload using: <b>{tr}</b>\n"
+    f"Name Substitution: <b>{ns_msg}</b>\n"
+    f"Excluded Extensions: <code>{ex_ex}</code>\n"
+    f"YT-DLP Options: <code>{escape(ytopt)}</code>\n"
+    f"FFMPEG Commands: <code>{ffc}</code>"
+)
+
 
     return text, buttons.build_menu(1)
 
 
+@new_task
 async def update_user_settings(query):
     msg, button = await get_user_settings(query.from_user)
-    await edit_message(query.message, msg, button)
+    user_id = query.from_user.id
+    media = (
+        f"Thumbnails/{user_id}.jpg"
+        if ospath.exists(f"Thumbnails/{user_id}.jpg")
+        else f"xyrad.jpg"
+    )
+    await query.message.edit_media(
+        media=InputMediaPhoto(
+            media=media,
+            caption=msg
+        ),
+        reply_markup=button
+    )
 
 
 @new_task
 async def user_settings(_, message):
     from_user = message.from_user
     handler_dict[from_user.id] = False
+    user_id = from_user.id
     msg, button = await get_user_settings(from_user)
-    await send_message(message, msg, button)
+    media = (
+        f"Thumbnails/{user_id}.jpg"
+        if ospath.exists(f"Thumbnails/{user_id}.jpg")
+        else f"xyrad.jpg"
+    )
+    await message.reply_photo(
+        media,
+        caption=msg,
+        reply_markup=button
+    )
 
 
 @new_task
@@ -421,6 +453,7 @@ async def edit_user_settings(client, query):
     elif data[2] in [
         "yt_opt",
         "lprefix",
+        "metadatatext",
         "index_url",
         "excluded_extensions",
         "name_sub",
@@ -546,21 +579,29 @@ async def edit_user_settings(client, query):
         else:
             thumb_layout = "None"
 
+        buttons.data_button("Metadata Text", f"userset {user_id} metadata_text")
+        if user_dict.get("metadatatext", False):
+            metadatatext = user_dict["metadatatext"]
+        else:
+            metadatatext = "None"
+
         buttons.data_button("Back", f"userset {user_id} back")
         buttons.data_button("Close", f"userset {user_id} close")
-        text = f"""<u>Leech Settings for {name}</u>
-Leech Type is <b>{ltype}</b>
-Custom Thumbnail <b>{thumbmsg}</b>
-Leech Split Size is <b>{split_size}</b>
-Equal Splits is <b>{equal_splits}</b>
-Media Group is <b>{media_group}</b>
-Leech Prefix is <code>{escape(lprefix)}</code>
-Leech Destination is <code>{leech_dest}</code>
-Leech by <b>{leech_method}</b> session
-Mixed Leech is <b>{mixed_leech}</b>
-Thumbnail Layout is <b>{thumb_layout}</b>
-"""
-        await edit_message(message, text, buttons.build_menu(2))
+        text = (
+    f"<u>Leech Settings for {name}</u>\n"
+    f"Leech Type: <b>{ltype}</b>\n"
+    f"Custom Thumbnail: <b>{thumbmsg}</b>\n"
+    f"Split Size: <b>{split_size}</b>\n"
+    f"Equal Splits: <b>{equal_splits}</b>\n"
+    f"Media Group: <b>{media_group}</b>\n"
+    f"Prefix: <code>{escape(lprefix)}</code>\n"
+    f"Destination: <code>{leech_dest}</code>\n"
+    f"Leech by: <b>{leech_method}</b>\n"
+    f"Mixed Leech: <b>{mixed_leech}</b>\n"
+    f"Thumbnail Layout: <b>{thumb_layout}</b>\n"
+    f"Metadata Text: <code>{escape(metadatatext)}</code>"
+)
+        await edit_message(message, text,   buttons.build_menu(2))
     elif data[2] == "rclone":
         await query.answer()
         buttons = ButtonMaker()
@@ -575,9 +616,11 @@ Thumbnail Layout is <b>{thumb_layout}</b>
             rccpath = RP
         else:
             rccpath = "None"
-        text = f"""<u>Rclone Settings for {name}</u>
-Rclone Config <b>{rccmsg}</b>
-Rclone Path is <code>{rccpath}</code>"""
+        text = (
+    f"<u>Rclone Settings for {name}</u>\n"
+    f"Config: <b>{rccmsg}</b>\n"
+    f"Path: <code>{rccpath}</code>"
+)
         await edit_message(message, text, buttons.build_menu(1))
     elif data[2] == "gdrive":
         await query.answer()
@@ -609,11 +652,13 @@ Rclone Path is <code>{rccpath}</code>"""
         else:
             gdrive_id = "None"
         index = user_dict["index_url"] if user_dict.get("index_url", False) else "None"
-        text = f"""<u>Gdrive Tools Settings for {name}</u>
-Gdrive Token <b>{tokenmsg}</b>
-Gdrive ID is <code>{gdrive_id}</code>
-Index URL is <code>{index}</code>
-Stop Duplicate is <b>{sd_msg}</b>"""
+        text = (
+    f"<u>Gdrive Tools Settings for {name}</u>\n"
+    f"Token: <b>{tokenmsg}</b>\n"
+    f"ID: <code>{gdrive_id}</code>\n"
+    f"Index URL: <code>{index}</code>\n"
+    f"Stop Duplicate: <b>{sd_msg}</b>"
+)
         await edit_message(message, text, buttons.build_menu(1))
     elif data[2] == "vthumb":
         await query.answer()
@@ -623,7 +668,6 @@ Stop Duplicate is <b>{sd_msg}</b>"""
         await query.answer()
         buttons = ButtonMaker()
         if await aiopath.exists(thumb_path):
-            buttons.data_button("View Thumbnail", f"userset {user_id} vthumb")
             buttons.data_button("Delete Thumbnail", f"userset {user_id} thumb")
         buttons.data_button("Back", f"userset {user_id} leech")
         buttons.data_button("Close", f"userset {user_id} close")
@@ -663,17 +707,18 @@ Check all yt-dlp api options from this <a href='https://github.com/yt-dlp/yt-dlp
             )
         buttons.data_button("Back", f"userset {user_id} back")
         buttons.data_button("Close", f"userset {user_id} close")
-        rmsg = """list of lists of ffmpeg commands. You can set multiple ffmpeg commands for all files before upload. Don't write ffmpeg at beginning, start directly with the arguments.
-Notes:
-1. Add <code>-del</code> to the list(s) which you want from the bot to delete the original files after command run complete!
-2. Seed will get disbaled while using this option
-3. It must be list of list(s) event of one list added like [["-i", "mltb.mkv", "-c", "copy", "-c:s", "srt", "mltb.mkv", "-del"]]
-Examples: [["-i", "mltb.mkv", "-c", "copy", "-c:s", "srt", "mltb.mkv", "-del"], ["-i", "mltb.video", "-c", "copy", "-c:s", "srt", "mltb"], ["-i", "mltb.m4a", "-c:a", "libmp3lame", "-q:a", "2", "mltb.mp3"], ["-i", "mltb.audio", "-c:a", "libmp3lame", "-q:a", "2", "mltb.mp3"]]
-Here I will explain how to use mltb.* which is reference to files you want to work on.
-1. First cmd: the input is mltb.mkv so this cmd will work only on mkv videos and the output is mltb.mkv also so all outputs is mkv. -del will delete the original media after complete run of the cmd.
-2. Second cmd: the input is mltb.video so this cmd will work on all videos and the output is only mltb so the extenstion is same as input files.
-3. Third cmd: the input in mltb.m4a so this cmd will work only on m4a audios and the output is mltb.mp3 so the output extension is mp3.
-4. Fourth cmd: the input is mltb.audio so this cmd will work on all audios and the output is mltb.mp3 so the output extension is mp3."""
+        rmsg = """List FFmpeg arguments for files before upload (without `ffmpeg`):
+
+1. Add `-del` to delete the original file after the command is completed.
+2. Seeding will be disabled when using this option.
+3. Must be a list of lists, even if only one list is provided.
+
+Example:
+-i mltb.mkv -c copy -c:s srt mltb.mkv -del  
+-i mltb.video -c copy -c:s srt mltb  
+-i mltb.m4a -c:a libmp3lame -q:a 2 mltb.mp3  
+-i mltb.audio -c:a libmp3lame -q:a 2 mltb.mp3
+"""
         await edit_message(message, rmsg, buttons.build_menu(1))
         pfunc = partial(set_option, pre_event=query, option="ffmpeg_cmds")
         await event_handler(client, query, pfunc)
@@ -769,6 +814,22 @@ Here I will explain how to use mltb.* which is reference to files you want to wo
             buttons.build_menu(1),
         )
         pfunc = partial(set_option, pre_event=query, option="lprefix")
+        await event_handler(client, query, pfunc)
+    elif data[2] == "metadata_text":
+        await query.answer()
+        buttons = ButtonMaker()
+        if (
+            user_dict.get("metadatatext", False)
+        ):
+            buttons.data_button("Remove Leech Metadata Text", f"userset {user_id} metadatatext")
+        buttons.data_button("Back", f"userset {user_id} leech")
+        buttons.data_button("Close", f"userset {user_id} close")
+        await edit_message(
+            message,
+            "Send Leech Metadata Text. Timeout: 60 sec",
+            buttons.build_menu(1),
+        )
+        pfunc = partial(set_option, pre_event=query, option="metadatatext")
         await event_handler(client, query, pfunc)
     elif data[2] == "ldest":
         await query.answer()
